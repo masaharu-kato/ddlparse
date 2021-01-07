@@ -212,6 +212,11 @@ class DdlParseColumn(DdlParseTableColumnBase):
                 self._comment = ''.join(matches[0])
 
 
+        self._fk = False
+        self._fk_ref_table = None
+        self._fk_ref_column = None
+
+
     @property
     def comment(self):
         return self._comment
@@ -250,6 +255,14 @@ class DdlParseColumn(DdlParseTableColumnBase):
         self._pk = flag
 
     @property
+    def foreign_key(self):
+        return self._fk
+
+    @foreign_key.setter
+    def foreign_key(self, flag):
+        self._fk = flag
+
+    @property
     def unique(self):
         return self._unique
 
@@ -260,6 +273,22 @@ class DdlParseColumn(DdlParseTableColumnBase):
     @property
     def auto_increment(self):
         return self._auto_increment
+
+    @property
+    def fk_ref_table(self):
+        return self._fk_ref_table
+
+    @fk_ref_table.setter
+    def fk_ref_table(self, name):
+        self._fk_ref_table = name
+
+    @property
+    def fk_ref_column(self):
+        return self._fk_ref_column
+
+    @fk_ref_column.setter
+    def fk_ref_column(self, names):
+        self._fk_ref_column = names
 
     @property
     def distkey(self):
@@ -714,7 +743,7 @@ class DdlParse(DdlParseBase):
             raise ValueError("DDL is not specified")
 
         ret = self._DDL_PARSE_EXPR.parseString(self._ddl)
-        # print(ret.dump())
+        print(ret.dump())
 
         if "schema" in ret:
             self._table.schema = ret["schema"]
@@ -734,15 +763,26 @@ class DdlParse(DdlParseBase):
 
             elif ret_col.getName() == "constraint":
                 # set column constraint
-                for col_name in ret_col["constraint_columns"]:
-                    col = self._table.columns[col_name]
 
-                    if ret_col["type"] == "PRIMARY KEY":
-                        col.not_null = True
-                        col.primary_key = True
-                    elif ret_col["type"] in ["UNIQUE", "UNIQUE KEY"]:
-                        col.unique = True
-                    elif ret_col["type"] == "NOT NULL":
-                        col.not_null = True
+                if ret_col["type"] == "FOREIGN KEY":
+                    if len(ret_col["constraint_columns"]) == 1:
+                        assert len(ret_col["references_columns"]) == 1
+                        col = self._table.columns[ret_col["constraint_columns"][0]]
+                        col.foreign_key = True
+                        col.fk_ref_table = ret_col["references_table"]
+                        col.fk_ref_column = ret_col["references_columns"][0]
+                    
+                else:
+                    for col_name in ret_col["constraint_columns"]:
+                        col = self._table.columns[col_name]
+
+                        if ret_col["type"] == "PRIMARY KEY":
+                            col.not_null = True
+                            col.primary_key = True
+                        elif ret_col["type"] in ["UNIQUE", "UNIQUE KEY"]:
+                            col.unique = True
+                        elif ret_col["type"] == "NOT NULL":
+                            col.not_null = True
+
 
         return self._table
