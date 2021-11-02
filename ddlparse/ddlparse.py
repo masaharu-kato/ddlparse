@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 #
 # Copyright (C) 2018 Shinichi Takii, shinichi.takii@shaketh.com
+# Modified by 2021 Masaharu Kato, fudai.mk@gmail.com
 #
 # This module is part of python-ddlparse and is released under
 # the BSD License: https://opensource.org/licenses/BSD-3-Clause
+#
+# pylint: disable=missing-class-docstring, missing-function-docstring
 
 """Parse DDL statements"""
 
-import re, textwrap, json
+import re
+import textwrap
+import json
 from collections import OrderedDict
 from enum import IntEnum
 
@@ -141,7 +146,7 @@ class DdlParseColumn(DdlParseTableColumnBase):
     def constraint(self, constraint):
 
         # Compatibility v1.6.1 and earlier
-        if type(constraint) is str:
+        if isinstance(constraint, str):
             self._constraint = None if constraint is None else constraint.upper()
 
             self._not_null = False if self._constraint is None or not re.search(r"(NOT NULL|PRIMARY KEY)", self._constraint) else True
@@ -212,6 +217,11 @@ class DdlParseColumn(DdlParseTableColumnBase):
                 self._comment = ''.join(matches[0])
 
 
+        self._fk = False
+        self._fk_ref_table = None
+        self._fk_ref_column = None
+
+
     @property
     def comment(self):
         return self._comment
@@ -250,6 +260,14 @@ class DdlParseColumn(DdlParseTableColumnBase):
         self._pk = flag
 
     @property
+    def foreign_key(self):
+        return self._fk
+
+    @foreign_key.setter
+    def foreign_key(self, flag):
+        self._fk = flag
+
+    @property
     def unique(self):
         return self._unique
 
@@ -260,6 +278,22 @@ class DdlParseColumn(DdlParseTableColumnBase):
     @property
     def auto_increment(self):
         return self._auto_increment
+
+    @property
+    def fk_ref_table(self):
+        return self._fk_ref_table
+
+    @fk_ref_table.setter
+    def fk_ref_table(self, name):
+        self._fk_ref_table = name
+
+    @property
+    def fk_ref_column(self):
+        return self._fk_ref_column
+
+    @fk_ref_column.setter
+    def fk_ref_column(self, names):
+        self._fk_ref_column = names
 
     @property
     def distkey(self):
@@ -375,11 +409,11 @@ class DdlParseColumn(DdlParseTableColumnBase):
 
         if self.array_dimensional <= 1:
             # no or one dimensional array data type
-            type = self.bigquery_legacy_data_type
+            data_type = self.bigquery_legacy_data_type
 
         else:
             # multiple dimensional array data type
-            type = "RECORD"
+            data_type = "RECORD"
 
             fields = OrderedDict()
             fields_cur = fields
@@ -396,7 +430,7 @@ class DdlParseColumn(DdlParseTableColumnBase):
 
         col = OrderedDict()
         col['name'] = col_name
-        col['type'] = type
+        col['type'] = data_type
         col['mode'] = mode
         if self.description is not None:
             col['description'] = self.description
@@ -539,7 +573,7 @@ class DdlParseTable(DdlParseTableColumnBase):
 
             if col.array_dimensional < 1:
                 # no array data type
-                type = col.bigquery_standard_data_type
+                data_type = col.bigquery_standard_data_type
                 not_null = " NOT NULL" if col.not_null else ""
 
             else:
@@ -550,13 +584,13 @@ class DdlParseTable(DdlParseTableColumnBase):
                     type_front += "STRUCT<dimension_{} ARRAY<".format(i)
                     type_back += ">>"
 
-                type = "{}{}{}".format(type_front, col.bigquery_standard_data_type, type_back)
+                data_type = "{}{}{}".format(type_front, col.bigquery_standard_data_type, type_back)
                 not_null = ""
 
             # cols_defs.append("{name} {type}{not_null}".format(
             cols_defs.append("{name} {type}{not_null}{description}".format(
                 name=col_name,
-                type=type,
+                type=data_type,
                 not_null=not_null,
                 description=' OPTIONS (description = "{}")'.format(col.description.replace('"', '\\"')) if col.description is not None else "",
             ))
@@ -665,7 +699,7 @@ class DdlParse(DdlParseBase):
         )("columns")
 
     _DDL_PARSE_EXPR = Forward()
-    _DDL_PARSE_EXPR << OneOrMore(_COMMENT | _CREATE_TABLE_STATEMENT)
+    _DDL_PARSE_EXPR << OneOrMore(_COMMENT | _CREATE_TABLE_STATEMENT) # pylint: disable=expression-not-assigned
 
 
     def __init__(self, ddl=None, source_database=None):
@@ -734,15 +768,26 @@ class DdlParse(DdlParseBase):
 
             elif ret_col.getName() == "constraint":
                 # set column constraint
-                for col_name in ret_col["constraint_columns"]:
-                    col = self._table.columns[col_name]
 
-                    if ret_col["type"] == "PRIMARY KEY":
-                        col.not_null = True
-                        col.primary_key = True
-                    elif ret_col["type"] in ["UNIQUE", "UNIQUE KEY"]:
-                        col.unique = True
-                    elif ret_col["type"] == "NOT NULL":
-                        col.not_null = True
+                if ret_col["type"] == "FOREIGN KEY":
+                    if len(ret_col["constraint_columns"]) == 1:
+                        assert len(ret_col["references_columns"]) == 1
+                        col = self._table.columns[ret_col["constraint_columns"][0]]
+                        col.foreign_key = True
+                        col.fk_ref_table = ret_col["references_table"]
+                        col.fk_ref_column = ret_col["references_columns"][0]
+                    
+                else:
+                    for col_name in ret_col["constraint_columns"]:
+                        col = self._table.columns[col_name]
+
+                        if ret_col["type"] == "PRIMARY KEY":
+                            col.not_null = True
+                            col.primary_key = True
+                        elif ret_col["type"] in ["UNIQUE", "UNIQUE KEY"]:
+                            col.unique = True
+                        elif ret_col["type"] == "NOT NULL":
+                            col.not_null = True
+
 
         return self._table
